@@ -135,7 +135,7 @@ export function createPlugin(vd) {
         button(expanded === record.id ? 'Hide files' : `Individual files (${record.files.length})`, () => setExpanded(expanded === record.id ? null : record.id), false, record.id + '-expand'),
         ...(expanded === record.id ? record.files.map(file => button(file.filename, () => { void share(record, file); }, live.busy, file.filename)) : [])
       )),
-      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.0 — requires on-device verification.')),
+      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.1 — requires on-device verification.')),
       h(Text, { style: styles.muted }, 'Based on the idea of Nightcord / TestCord ExportDM. This version never uploads your exports or sends messages to a conversation. JSON retains the original API message fields; other formats are readable views. Previously deleted messages cannot be recovered.')
     );
     return h(FlatList, { style: styles.page, data: filtered, keyExtractor: item => item.id,
@@ -152,14 +152,14 @@ export function createPlugin(vd) {
   function openSettings(channel) {
     settingsPrefill = channel ? { ...channel } : null;
     try {
-      const rootNavigation = vd.metro?.findByProps?.('getRootNavigationRef')?.getRootNavigationRef?.();
-      if (typeof rootNavigation?.navigate === 'function') {
-        rootNavigation.navigate('PUPU_CUSTOM_PAGE', { title: 'DM Export', render: Settings });
+      const showCustomAlert = vd.ui?.alerts?.showCustomAlert;
+      if (typeof showCustomAlert === 'function') {
+        showCustomAlert(Settings, {});
         return true;
       }
     } catch { /* Fall through to a safe error instead of crashing Discord. */ }
     settingsPrefill = null;
-    Alert.alert('DM Export', 'This Kettu build did not expose the settings navigator. Open Kettu → Plugins → DM Export → Configure manually.');
+    Alert.alert('DM Export', 'This Kettu build did not expose the custom plugin UI. Open Kettu → Plugins → DM Export → Configure manually.');
     return false;
   }
 

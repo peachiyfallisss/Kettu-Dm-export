@@ -2,7 +2,7 @@
 
 A mobile reimplementation of the full-history DM export feature in [Nightcord / TestCord's ExportDM](https://github.com/TestcordDev/TestCord/tree/main/src/testcordplugins/exportDM), using Kettu's Vendetta-compatible plugin loader.
 
-**Version 0.2.0 — experimental.** Automated tests pass, but this build has not been run inside a physical Android/iOS Discord client. Discord changes its internal modules frequently. The plugin checks for the necessary APIs before fetching messages and reports missing capabilities in its settings.
+**Version 0.2.1 — experimental.** Automated tests pass, but this build has not been run inside a physical Android/iOS Discord client. Discord changes its internal modules frequently. The plugin checks for the necessary APIs before fetching messages and reports missing capabilities in its settings.
 
 ## What it does
 
@@ -37,7 +37,7 @@ For later updates, run `npm run build` and `npm run serve`, save your existing e
 
 ## Slash command
 
-Run `/exportdm` inside a DM or group DM. With no options, it opens the full DM Export configuration page with the current conversation already selected.
+Run `/exportdm` inside a DM or group DM. With no options, it opens DM Export in a Kettu modal with the current conversation already selected.
 
 For a menu-free export, choose **Export now** in the `action` option. `format` can be HTML, TXT, JSON, CSV, or Markdown; if omitted, the most recently selected format is used. Direct exports open the phone's Save / Share chooser when finished by default. Set `share` to false to leave the files only in Kettu's local export storage. Supplying `format` or `share` also implies a direct export, so `/exportdm format:json` is enough to export the current DM as JSON and open the chooser when it finishes.
 

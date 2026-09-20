@@ -1,6 +1,6 @@
 {
   "name": "kettu-dm-export",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "Full-history DM export for Kettu's Vendetta-compatible plugin loader",

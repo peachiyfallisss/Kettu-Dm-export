@@ -10,7 +10,7 @@ const core = readFileSync(new URL('../src/core.mjs', import.meta.url), 'utf8').r
 const mobile = readFileSync(new URL('../src/mobile.mjs', import.meta.url), 'utf8').replace(/^export /gm, '');
 
 function mock() {
-  const writes = [], shares = [], commands = [], alerts = [], navigations = [], toasts = [];
+  const writes = [], shares = [], commands = [], alerts = [], customAlerts = [], toasts = [];
   let owner = '42', removed = 0;
   const dm = { id: '999', type: 1, recipients: ['123'] };
   const stores = {
@@ -28,16 +28,17 @@ function mock() {
   const RN = { NativeModules: { DCDFileManager: file, RNShare: share }, Alert: { alert: (...args) => alerts.push(args) },
     View: 'View', Text: 'Text', TouchableOpacity: 'TouchableOpacity', TextInput: 'TextInput', FlatList: 'FlatList' };
   const navigation = { pushLazy() {} };
-  const rootNavigation = { navigate: (...args) => navigations.push(args) };
-  const rootNavigationModule = { getRootNavigationRef: () => rootNavigation };
   const vd = { metro: { common: { ReactNative: RN, React, navigation }, findByStoreName: name => stores[name],
-    findByProps: (...keys) => [http, share, rootNavigationModule, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
+    findByProps: (...keys) => [http, share, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
     plugin: { storage: {} }, commands: { registerCommand: command => { commands.push(command); return () => removed++; } },
-    ui: { toasts: { showToast: text => toasts.push(text) } } };
+    ui: {
+      toasts: { showToast: text => toasts.push(text) },
+      alerts: { showCustomAlert: (component, props) => customAlerts.push({ component, props }) }
+    } };
   const ctx = { vendetta: vd, setTimeout, clearTimeout, setInterval, clearInterval, console };
   const context = vm.createContext(ctx);
   const adapter = vm.runInContext(core + '\n' + mobile + '\ncreateMobileAdapter(vendetta)', context);
-  return { writes, shares, commands, alerts, navigations, toasts, stores, file, share, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed };
+  return { writes, shares, commands, alerts, customAlerts, toasts, stores, file, share, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed };
 }
 
 test('native adapter lists DMs, sends only GET history requests, and writes UTF-8 files', async () => {
@@ -85,9 +86,8 @@ test('built artifact follows Kettu eval contract; /exportdm opens settings with 
   assert.equal(result, undefined);
   assert.equal(m.alerts.length, 0);
   assert.equal(m.http.calls.length, 0);
-  assert.equal(m.navigations.length, 1);
-  assert.equal(m.navigations[0][0], 'PUPU_CUSTOM_PAGE');
-  const page = m.navigations[0][1].render();
+  assert.equal(m.customAlerts.length, 1);
+  const page = m.customAlerts[0].component(m.customAlerts[0].props);
   assert.equal(page.props.data[0].id, '999');
   const row = page.props.renderItem({ item: page.props.data[0] });
   assert.equal(row.props.accessibilityState.checked, true);
@@ -104,7 +104,7 @@ test('/exportdm can export and share the current DM without opening settings', a
   ], { channel: { id: '999', type: 1, recipients: ['123'] } });
   assert.equal(result, undefined);
   for (let i = 0; i < 20 && m.shares.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(m.navigations.length, 0);
+  assert.equal(m.customAlerts.length, 0);
   assert.equal(m.http.calls.length, 1);
   assert.equal(m.http.calls[0].url, '/channels/999/messages');
   assert.ok(m.writes.length >= 2);
