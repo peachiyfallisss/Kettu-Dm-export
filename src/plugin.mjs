@@ -151,11 +151,13 @@ export function createPlugin(vd) {
   }
   function openSettings(channel) {
     settingsPrefill = channel ? { ...channel } : null;
-    const navigation = vd.metro?.common?.navigation;
-    if (typeof navigation?.push === 'function') {
-      navigation.push('PUPU_CUSTOM_PAGE', { title: 'DM Export', render: Settings });
-      return true;
-    }
+    try {
+      const rootNavigation = vd.metro?.findByProps?.('getRootNavigationRef')?.getRootNavigationRef?.();
+      if (typeof rootNavigation?.navigate === 'function') {
+        rootNavigation.navigate('PUPU_CUSTOM_PAGE', { title: 'DM Export', render: Settings });
+        return true;
+      }
+    } catch { /* Fall through to a safe error instead of crashing Discord. */ }
     settingsPrefill = null;
     Alert.alert('DM Export', 'This Kettu build did not expose the settings navigator. Open Kettu → Plugins → DM Export → Configure manually.');
     return false;

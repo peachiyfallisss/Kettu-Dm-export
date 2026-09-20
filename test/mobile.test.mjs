@@ -27,9 +27,11 @@ function mock() {
   };
   const RN = { NativeModules: { DCDFileManager: file, RNShare: share }, Alert: { alert: (...args) => alerts.push(args) },
     View: 'View', Text: 'Text', TouchableOpacity: 'TouchableOpacity', TextInput: 'TextInput', FlatList: 'FlatList' };
-  const navigation = { push: (...args) => navigations.push(args), pushLazy() {} };
+  const navigation = { pushLazy() {} };
+  const rootNavigation = { navigate: (...args) => navigations.push(args) };
+  const rootNavigationModule = { getRootNavigationRef: () => rootNavigation };
   const vd = { metro: { common: { ReactNative: RN, React, navigation }, findByStoreName: name => stores[name],
-    findByProps: (...keys) => [http, share, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
+    findByProps: (...keys) => [http, share, rootNavigationModule, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
     plugin: { storage: {} }, commands: { registerCommand: command => { commands.push(command); return () => removed++; } },
     ui: { toasts: { showToast: text => toasts.push(text) } } };
   const ctx = { vendetta: vd, setTimeout, clearTimeout, setInterval, clearInterval, console };
