@@ -11,6 +11,7 @@ const mobile = readFileSync(new URL('../src/mobile.mjs', import.meta.url), 'utf8
 
 function mock() {
   const writes = [], shares = [], commands = [], alerts = [], customAlerts = [], toasts = [];
+  let closedAlerts = 0;
   let owner = '42', removed = 0;
   const dm = { id: '999', type: 1, recipients: ['123'] };
   const stores = {
@@ -27,9 +28,10 @@ function mock() {
   };
   const RN = { NativeModules: { DCDFileManager: file, RNShare: share }, Alert: { alert: (...args) => alerts.push(args) },
     View: 'View', Text: 'Text', TouchableOpacity: 'TouchableOpacity', TextInput: 'TextInput', FlatList: 'FlatList' };
+  const alertManager = { openLazy() {}, close: () => { closedAlerts++; } };
   const navigation = { pushLazy() {} };
   const vd = { metro: { common: { ReactNative: RN, React, navigation }, findByStoreName: name => stores[name],
-    findByProps: (...keys) => [http, share, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
+    findByProps: (...keys) => [http, share, alertManager, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
     plugin: { storage: {} }, commands: { registerCommand: command => { commands.push(command); return () => removed++; } },
     ui: {
       toasts: { showToast: text => toasts.push(text) },
@@ -38,7 +40,7 @@ function mock() {
   const ctx = { vendetta: vd, setTimeout, clearTimeout, setInterval, clearInterval, console };
   const context = vm.createContext(ctx);
   const adapter = vm.runInContext(core + '\n' + mobile + '\ncreateMobileAdapter(vendetta)', context);
-  return { writes, shares, commands, alerts, customAlerts, toasts, stores, file, share, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed };
+  return { writes, shares, commands, alerts, customAlerts, toasts, stores, file, share, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed, closedAlerts: () => closedAlerts };
 }
 
 test('native adapter lists DMs, sends only GET history requests, and writes UTF-8 files', async () => {
@@ -61,9 +63,10 @@ test('account switch prevents history requests, file writes and shares', async (
   assert.equal(m.http.calls.length + m.writes.length + m.shares.length, 0);
 });
 
-test('missing native sharing fails preflight instead of fetching an unusable archive', () => {
+test('missing native sharing does not block export preflight', () => {
   const m = mock(); delete m.share.open;
-  assert.throws(() => m.adapter.ensureReady(), /share/);
+  assert.doesNotThrow(() => m.adapter.ensureReady());
+  assert.equal(m.adapter.capabilities().share, false);
   assert.equal(m.http.calls.length, 0);
 });
 
@@ -87,10 +90,17 @@ test('built artifact follows Kettu eval contract; /exportdm opens settings with 
   assert.equal(m.alerts.length, 0);
   assert.equal(m.http.calls.length, 0);
   assert.equal(m.customAlerts.length, 1);
+  assert.equal(m.customAlerts[0].props.modal, true);
   const page = m.customAlerts[0].component(m.customAlerts[0].props);
   assert.equal(page.props.data[0].id, '999');
   const row = page.props.renderItem({ item: page.props.data[0] });
   assert.equal(row.props.accessibilityState.checked, true);
+  const header = page.props.ListHeaderComponent;
+  const topRow = header.children[0];
+  const closeButton = topRow.children.find(child => child?.props?.accessibilityLabel === 'Close');
+  assert.ok(closeButton);
+  closeButton.props.onPress();
+  assert.equal(m.closedAlerts(), 1);
   plugin.onUnload(); assert.equal(m.removed(), 1);
 });
 
@@ -111,6 +121,22 @@ test('/exportdm can export and share the current DM without opening settings', a
   assert.equal(m.shares.length, 1);
   assert.equal(m.shares[0].urls.length, 1);
   assert.ok(m.toasts.some(text => /complete/i.test(text)));
+  plugin.onUnload();
+});
+
+test('/exportdm direct export completes when native sharing is unavailable', async () => {
+  const m = mock(); delete m.share.open;
+  const plugin = vm.runInContext(bundle, m.context);
+  plugin.onLoad();
+  m.commands[0].execute([
+    { name: 'format', value: 'json' }
+  ], { channel: { id: '999', type: 1, recipients: ['123'] } });
+  for (let i = 0; i < 20 && m.http.calls.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  for (let i = 0; i < 20 && !m.toasts.some(text => /saved inside/i.test(text)); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(m.http.calls.length, 1);
+  assert.ok(m.writes.length >= 2);
+  assert.equal(m.shares.length, 0);
+  assert.ok(m.toasts.some(text => /saved inside/i.test(text)));
   plugin.onUnload();
 });
 

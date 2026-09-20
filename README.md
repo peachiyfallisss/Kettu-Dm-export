@@ -2,7 +2,7 @@
 
 A mobile reimplementation of the full-history DM export feature in [Nightcord / TestCord's ExportDM](https://github.com/TestcordDev/TestCord/tree/main/src/testcordplugins/exportDM), using Kettu's Vendetta-compatible plugin loader.
 
-**Version 0.2.1 — experimental.** Automated tests pass, but this build has not been run inside a physical Android/iOS Discord client. Discord changes its internal modules frequently. The plugin checks for the necessary APIs before fetching messages and reports missing capabilities in its settings.
+**Version 0.2.2 — experimental.** Automated tests pass, but this build has not been run inside a physical Android/iOS Discord client. Discord changes its internal modules frequently. The plugin checks for the necessary APIs before fetching messages and reports missing capabilities in its settings.
 
 ## What it does
 
@@ -10,7 +10,7 @@ A mobile reimplementation of the full-history DM export feature in [Nightcord / 
 - Offers HTML, TXT, JSON, CSV, and Markdown. JSON retains the complete message objects returned by Discord, including full reply data, attachments, embeds, reactions, stickers, polls and other metadata.
 - Fetches history in pages of 100, with a one-second pause between pages, bounded retries, and server-directed rate-limit waits.
 - Shows progress, allows cancellation, and keeps fetched data when a later request fails.
-- Writes native files locally. **Save / share files** opens the phone's chooser; choose your Files/storage app or another destination yourself.
+- Writes native files locally. When Kettu exposes a compatible native share module, **Save / share files** opens the phone's chooser. Missing sharing no longer blocks the export itself.
 - Uses Discord's existing authenticated HTTP client. You never paste a Discord token, and the plugin never extracts, stores, or logs one.
 - Registers a local `/exportdm` shortcut. It does not send an export, bot reply, status message, or command text to the conversation.
 
@@ -37,9 +37,9 @@ For later updates, run `npm run build` and `npm run serve`, save your existing e
 
 ## Slash command
 
-Run `/exportdm` inside a DM or group DM. With no options, it opens DM Export in a Kettu modal with the current conversation already selected.
+Run `/exportdm` inside a DM or group DM. With no options, it opens DM Export in a Kettu modal with the current conversation already selected. The modal includes its own **Close** button, and Android Back is handled when available.
 
-For a menu-free export, choose **Export now** in the `action` option. `format` can be HTML, TXT, JSON, CSV, or Markdown; if omitted, the most recently selected format is used. Direct exports open the phone's Save / Share chooser when finished by default. Set `share` to false to leave the files only in Kettu's local export storage. Supplying `format` or `share` also implies a direct export, so `/exportdm format:json` is enough to export the current DM as JSON and open the chooser when it finishes.
+For a menu-free export, choose **Export now** in the `action` option. `format` can be HTML, TXT, JSON, CSV, or Markdown; if omitted, the most recently selected format is used. Direct exports open the phone's Save / Share chooser when Kettu exposes a compatible native share module. If sharing is unavailable, the export still completes and remains in Kettu/Discord app storage. Set `share` to false to skip the chooser deliberately. Supplying `format` or `share` also implies a direct export.
 
 The command never posts anything into the conversation. Keep Discord in the foreground while a direct export runs. Progress is still recorded in the plugin's saved exports list, so an incomplete export can be inspected later from Configure.
 
@@ -62,7 +62,7 @@ Exports stay in Discord's application documents directory until you save/share t
 - Media is represented by Discord attachment links. The files are **not offline media backups**; links may expire. HTML can load remote images/videos when opened with network access.
 - HTML/TXT/Markdown/CSV are readable views; JSON is the most faithful format. HTML displays user text safely rather than rendering arbitrary embedded HTML or scripts.
 - History is read over time, not as an atomic snapshot. Messages added after the first page, or edited/deleted while the export runs, may not be reflected consistently.
-- The plugin requires Kettu's native file manager and a compatible RNShare module. If either is absent, it stops before downloading history. React Native's text-only sharing API is not treated as an Android file-export fallback.
+- The plugin requires Kettu's native file manager for export. Native file sharing is optional: if a compatible RNShare-style module is absent, history can still be exported, but the files remain in Discord/Kettu app storage until a compatible export/share path is available. React Native's text-only sharing API is not treated as a file fallback.
 - Full on-device compatibility and the native Files chooser still need verification on your actual Kettu/Discord version.
 
 ## Troubleshooting

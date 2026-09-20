@@ -57,7 +57,8 @@ export function createMobileAdapter(vd, environment = globalThis) {
   });
   const ensureReady = () => {
     const caps = capabilities();
-    const missing = Object.keys(caps).filter(k => !caps[k]);
+    const required = ['account', 'channels', 'request', 'fileWrite'];
+    const missing = required.filter(k => !caps[k]);
     if (missing.length) throw new Error(`This Discord/Kettu build is missing: ${missing.join(', ')}. No history was fetched. Check the compatibility details in this plugin's settings.`);
   };
   const request = async (channelId, before, owner) => {

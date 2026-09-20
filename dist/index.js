@@ -261,7 +261,8 @@ function createMobileAdapter(vd, environment = globalThis) {
   });
   const ensureReady = () => {
     const caps = capabilities();
-    const missing = Object.keys(caps).filter(k => !caps[k]);
+    const required = ['account', 'channels', 'request', 'fileWrite'];
+    const missing = required.filter(k => !caps[k]);
     if (missing.length) throw new Error(`This Discord/Kettu build is missing: ${missing.join(', ')}. No history was fetched. Check the compatibility details in this plugin's settings.`);
   };
   const request = async (channelId, before, owner) => {
@@ -373,7 +374,12 @@ function createPlugin(vd) {
         completedRecords.push({ ...record, files: [...record.files] });
         completed++;
       }
-      if (alive && !stopped) publish({ text: `${completed} conversation${completed === 1 ? '' : 's'} complete. Use Save / share below to keep the files outside Discord.` });
+      if (alive && !stopped) {
+        const canShare = adapter.capabilities().share;
+        publish({ text: canShare
+          ? `${completed} conversation${completed === 1 ? '' : 's'} complete. Use Save / share below to keep the files outside Discord.`
+          : `${completed} conversation${completed === 1 ? '' : 's'} complete. Native sharing is unavailable in this build, so the files remain in Discord/Kettu app storage.` });
+      }
     } catch (e) { publish({ text: e instanceof Error ? e.message : 'Export stopped.' }); }
     finally { control = null; publish({ busy: false }); }
     return completedRecords;
@@ -381,6 +387,13 @@ function createPlugin(vd) {
   async function share(record, file) {
     try { await adapter.shareFiles(file ? [file] : record.files, record.owner); }
     catch (e) { errorAlert(e); }
+  }
+  function closeModal() {
+    try {
+      const alerts = vd.metro?.findByProps?.('openLazy', 'close');
+      if (typeof alerts?.close === 'function') { alerts.close(); return true; }
+    } catch { /* Keep the UI alive if Discord changes the alert module. */ }
+    return false;
   }
   const styles = {
     page: { flex: 1, backgroundColor: '#171820' },
@@ -401,7 +414,8 @@ function createPlugin(vd) {
       accessibilityState: { disabled }, disabled, onPress,
       style: [styles.button, disabled ? { opacity: 0.45 } : null] }, h(Text, { style: styles.buttonText }, label));
   }
-  function Settings() {
+  function Settings(props = {}) {
+    const modal = !!props.modal;
     const [live, setLive] = React.useState({ ...state, records: readRecords() });
     const [prefill] = React.useState(() => { const value = settingsPrefill; settingsPrefill = null; return value; });
     const [list, setList] = React.useState(() => includeChannel(adapter.listChannels(), prefill));
@@ -417,14 +431,29 @@ function createPlugin(vd) {
       }, 1000);
       return () => { clearInterval(timer); listeners.delete(setLive); };
     }, [live.records]);
+    React.useEffect(() => {
+      if (!modal || !RN.BackHandler?.addEventListener) return;
+      const subscription = RN.BackHandler.addEventListener('hardwareBackPress', () => {
+        closeModal();
+        return true;
+      });
+      return () => subscription?.remove?.();
+    }, [modal]);
     const filtered = list.filter(c => (c.name + ' ' + c.id).toLowerCase().includes(query.toLowerCase()));
     const chosen = list.filter(c => selected.has(c.id));
+    const canShare = adapter.capabilities().share;
     const refresh = () => { setList(adapter.listChannels()); setSelected(new Set()); setLive({ ...state, records: readRecords() }); };
     const toggle = id => setSelected(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
     const header = h(View, { style: styles.pad },
-      h(Text, { style: styles.title }, 'DM Export'),
+      h(View, { style: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' } },
+        h(Text, { style: styles.title }, 'DM Export'),
+        modal ? button('Close', () => {
+          if (!closeModal()) Alert.alert('DM Export', 'Kettu could not dismiss this modal. Use Android Back or reload Discord.');
+        }, false, 'modal-close') : null
+      ),
       h(Text, { style: styles.text }, 'Save the full available history of your DMs and group DMs.'),
       h(Text, { style: styles.muted }, 'Media stays linked to Discord. Keep the app open during export. Long histories are split into parts of up to 2,000 messages (or about 4 MB of raw data).'),
+      !canShare ? h(Text, { style: styles.muted }, 'This Discord build does not expose native file sharing. Exporting still works, but files will remain in Kettu/Discord app storage until a compatible sharing method is available.') : null,
       h(View, { style: styles.row }, ...Object.keys(FORMATS).map(f => button(`${f === format ? '✓ ' : ''}${f.toUpperCase()}`, () => { setFormat(f); storage.format = f; }, live.busy))),
       h(TextInput, { style: styles.input, placeholder: 'Search conversations', placeholderTextColor: '#aeb1c6', accessibilityLabel: 'Search conversations', value: query, onChangeText: setQuery, autoCapitalize: 'none' }),
       h(View, { style: styles.row }, button('Refresh list', refresh, live.busy), button('Select shown', () => setSelected(new Set([...selected, ...filtered.map(c => c.id)])), live.busy), button('Clear', () => setSelected(new Set()), live.busy)),
@@ -441,11 +470,11 @@ function createPlugin(vd) {
         h(Text, { style: styles.text }, record.channelName),
         h(Text, { style: styles.muted }, `${record.complete ? 'Complete' : 'INCOMPLETE (' + record.status + ')'} · ${record.count.toLocaleString()} messages · ${record.format.toUpperCase()}`),
         record.error ? h(Text, { style: styles.muted }, record.error) : null,
-        button('Save / share files', () => { void share(record); }, live.busy || !record.files.length, record.id + '-share'),
+        button(canShare ? 'Save / share files' : 'Save / share unavailable', () => { void share(record); }, live.busy || !record.files.length || !canShare, record.id + '-share'),
         button(expanded === record.id ? 'Hide files' : `Individual files (${record.files.length})`, () => setExpanded(expanded === record.id ? null : record.id), false, record.id + '-expand'),
-        ...(expanded === record.id ? record.files.map(file => button(file.filename, () => { void share(record, file); }, live.busy, file.filename)) : [])
+        ...(expanded === record.id ? record.files.map(file => button(file.filename, () => { void share(record, file); }, live.busy || !canShare, file.filename)) : [])
       )),
-      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.1 — requires on-device verification.')),
+      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.2 — requires on-device verification.')),
       h(Text, { style: styles.muted }, 'Based on the idea of Nightcord / TestCord ExportDM. This version never uploads your exports or sends messages to a conversation. JSON retains the original API message fields; other formats are readable views. Previously deleted messages cannot be recovered.')
     );
     return h(FlatList, { style: styles.page, data: filtered, keyExtractor: item => item.id,
@@ -464,7 +493,7 @@ function createPlugin(vd) {
     try {
       const showCustomAlert = vd.ui?.alerts?.showCustomAlert;
       if (typeof showCustomAlert === 'function') {
-        showCustomAlert(Settings, {});
+        showCustomAlert(Settings, { modal: true });
         return true;
       }
     } catch { /* Fall through to a safe error instead of crashing Discord. */ }
@@ -501,13 +530,15 @@ function createPlugin(vd) {
             if (action !== 'export') { Alert.alert('DM Export', 'Action must be menu or export.'); return; }
             const format = String(values.format || (FORMATS[storage.format] ? storage.format : 'html')).toLowerCase();
             if (!FORMATS[format]) { Alert.alert('DM Export', 'Format must be html, txt, json, csv, or md.'); return; }
-            const shouldShare = values.share !== false;
+            const shareRequested = values.share !== false;
+            const shouldShare = shareRequested && adapter.capabilities().share;
             toast(`Exporting ${channel.name} as ${format.toUpperCase()}…`);
             void startExport([channel], format).then(async records => {
               const record = records[0];
               if (!record?.complete) { toast('DM export did not complete. Open DM Export settings for details.'); return; }
               toast(`DM export complete: ${record.count.toLocaleString()} messages.`);
               if (shouldShare) await share(record);
+              else if (shareRequested) toast('Native sharing is unavailable in this Discord build. The export was saved inside Kettu/Discord app storage.');
             }).catch(errorAlert);
             // MUST return undefined: Kettu sends object return values as messages.
           }
