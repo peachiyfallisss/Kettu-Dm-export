@@ -10,7 +10,7 @@ const core = readFileSync(new URL('../src/core.mjs', import.meta.url), 'utf8').r
 const mobile = readFileSync(new URL('../src/mobile.mjs', import.meta.url), 'utf8').replace(/^export /gm, '');
 
 function mock() {
-  const writes = [], shares = [], commands = [], alerts = [];
+  const writes = [], shares = [], commands = [], alerts = [], navigations = [], toasts = [];
   let owner = '42', removed = 0;
   const dm = { id: '999', type: 1, recipients: ['123'] };
   const stores = {
@@ -25,14 +25,17 @@ function mock() {
     createElement: (type, props, ...children) => ({ type, props, children }),
     useState: init => [typeof init === 'function' ? init() : init, () => {}], useEffect() {}
   };
-  const RN = { NativeModules: { DCDFileManager: file, RNShare: share }, Alert: { alert: (...args) => alerts.push(args) } };
-  const vd = { metro: { common: { ReactNative: RN, React }, findByStoreName: name => stores[name],
+  const RN = { NativeModules: { DCDFileManager: file, RNShare: share }, Alert: { alert: (...args) => alerts.push(args) },
+    View: 'View', Text: 'Text', TouchableOpacity: 'TouchableOpacity', TextInput: 'TextInput', FlatList: 'FlatList' };
+  const navigation = { push: (...args) => navigations.push(args), pushLazy() {} };
+  const vd = { metro: { common: { ReactNative: RN, React, navigation }, findByStoreName: name => stores[name],
     findByProps: (...keys) => [http, share, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
-    plugin: { storage: {} }, commands: { registerCommand: command => { commands.push(command); return () => removed++; } } };
+    plugin: { storage: {} }, commands: { registerCommand: command => { commands.push(command); return () => removed++; } },
+    ui: { toasts: { showToast: text => toasts.push(text) } } };
   const ctx = { vendetta: vd, setTimeout, clearTimeout, setInterval, clearInterval, console };
   const context = vm.createContext(ctx);
   const adapter = vm.runInContext(core + '\n' + mobile + '\ncreateMobileAdapter(vendetta)', context);
-  return { writes, shares, commands, alerts, stores, file, share, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed };
+  return { writes, shares, commands, alerts, navigations, toasts, stores, file, share, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed };
 }
 
 test('native adapter lists DMs, sends only GET history requests, and writes UTF-8 files', async () => {
@@ -67,7 +70,7 @@ test('path traversal cannot write outside the export directory', async () => {
   assert.equal(m.writes.length, 0);
 });
 
-test('built artifact follows Kettu eval contract; slash command returns no chat message', () => {
+test('built artifact follows Kettu eval contract; /exportdm opens settings with the current DM selected', () => {
   const m = mock();
   // Match Kettu's vendetta=>{return <plugin.js>} evaluation exactly.
   const factory = vm.runInContext('vendetta=>{return ' + bundle + '}', m.context);
@@ -75,10 +78,53 @@ test('built artifact follows Kettu eval contract; slash command returns no chat 
   assert.equal(typeof plugin.settings, 'function');
   plugin.onLoad();
   assert.equal(m.commands[0].name, 'exportdm');
+  assert.equal(m.commands[0].options[0].name, 'action');
   const result = m.commands[0].execute([], { channel: { id: '999', type: 1, recipients: ['123'] } });
-  assert.equal(result, undefined); assert.equal(m.alerts.length, 1);
-  assert.equal(m.http.calls.length, 0); // No export before the user's local action.
+  assert.equal(result, undefined);
+  assert.equal(m.alerts.length, 0);
+  assert.equal(m.http.calls.length, 0);
+  assert.equal(m.navigations.length, 1);
+  assert.equal(m.navigations[0][0], 'PUPU_CUSTOM_PAGE');
+  const page = m.navigations[0][1].render();
+  assert.equal(page.props.data[0].id, '999');
+  const row = page.props.renderItem({ item: page.props.data[0] });
+  assert.equal(row.props.accessibilityState.checked, true);
   plugin.onUnload(); assert.equal(m.removed(), 1);
+});
+
+test('/exportdm can export and share the current DM without opening settings', async () => {
+  const m = mock();
+  const plugin = vm.runInContext(bundle, m.context);
+  plugin.onLoad();
+  const result = m.commands[0].execute([
+    { name: 'action', value: 'export' },
+    { name: 'format', value: 'json' }
+  ], { channel: { id: '999', type: 1, recipients: ['123'] } });
+  assert.equal(result, undefined);
+  for (let i = 0; i < 20 && m.shares.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(m.navigations.length, 0);
+  assert.equal(m.http.calls.length, 1);
+  assert.equal(m.http.calls[0].url, '/channels/999/messages');
+  assert.ok(m.writes.length >= 2);
+  assert.equal(m.shares.length, 1);
+  assert.equal(m.shares[0].urls.length, 1);
+  assert.ok(m.toasts.some(text => /complete/i.test(text)));
+  plugin.onUnload();
+});
+
+test('/exportdm direct export respects share:false', async () => {
+  const m = mock();
+  const plugin = vm.runInContext(bundle, m.context);
+  plugin.onLoad();
+  m.commands[0].execute([
+    { name: 'format', value: 'txt' },
+    { name: 'share', value: false }
+  ], { channel: { id: '999', type: 1, recipients: ['123'] } });
+  for (let i = 0; i < 20 && m.http.calls.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  for (let i = 0; i < 20 && !m.toasts.some(text => /complete/i.test(text)); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(m.http.calls.length, 1);
+  assert.equal(m.shares.length, 0);
+  plugin.onUnload();
 });
 
 test('plugin marks process-interrupted jobs incomplete and rejects server channels', () => {

@@ -317,21 +317,25 @@ function createPlugin(vd) {
   const { View, Text, TouchableOpacity, TextInput, FlatList, Alert } = RN;
   const storage = vd.plugin.storage;
   let alive = true, control = null;
+  let settingsPrefill = null;
   let state = { busy: false, count: 0, text: 'Choose one or more conversations.', current: '', records: [] };
   const listeners = new Set(), cleanups = [];
   const publish = patch => { state = { ...state, ...patch }; if (alive) for (const notify of listeners) notify(state); };
   const readRecords = () => (Array.isArray(storage.exports) ? storage.exports : []).filter(r => r.owner === adapter.currentUserId());
   const errorAlert = e => { if (alive) Alert.alert('DM Export', e instanceof Error ? e.message : 'Something went wrong.'); };
+  const toast = text => { try { vd.ui?.toasts?.showToast?.(text); } catch { /* Toasts are optional. */ } };
+  const includeChannel = (list, channel) => channel && !list.some(c => c.id === channel.id) ? [channel, ...list] : list;
   const saveRecord = record => {
     const old = Array.isArray(storage.exports) ? storage.exports : [];
     storage.exports = [record, ...old.filter(r => r.id !== record.id)];
     publish({ records: readRecords() });
   };
   async function startExport(chosen, format) {
-    if (state.busy) { Alert.alert('DM Export', 'An export is already running.'); return; }
-    if (!chosen.length) return;
+    const completedRecords = [];
+    if (state.busy) { Alert.alert('DM Export', 'An export is already running.'); return completedRecords; }
+    if (!chosen.length) return completedRecords;
     const snapshot = chosen.map(c => ({ ...c }));
-    try { adapter.ensureReady(); } catch (e) { errorAlert(e); return; }
+    try { adapter.ensureReady(); } catch (e) { errorAlert(e); return completedRecords; }
     const owner = adapter.currentUserId();
     control = { cancelled: false };
     const jobControl = control;
@@ -366,11 +370,13 @@ function createPlugin(vd) {
         Object.assign(record, { status: result.summary.status, complete: result.summary.complete, count: result.summary.messageCount, error: result.summary.error });
         if (alive && adapter.currentUserId() === owner) saveRecord(record);
         if (!result.summary.complete) { stopped = true; publish({ text: result.summary.error || 'Export incomplete.' }); break; }
+        completedRecords.push({ ...record, files: [...record.files] });
         completed++;
       }
       if (alive && !stopped) publish({ text: `${completed} conversation${completed === 1 ? '' : 's'} complete. Use Save / share below to keep the files outside Discord.` });
     } catch (e) { publish({ text: e instanceof Error ? e.message : 'Export stopped.' }); }
     finally { control = null; publish({ busy: false }); }
+    return completedRecords;
   }
   async function share(record, file) {
     try { await adapter.shareFiles(file ? [file] : record.files, record.owner); }
@@ -397,9 +403,10 @@ function createPlugin(vd) {
   }
   function Settings() {
     const [live, setLive] = React.useState({ ...state, records: readRecords() });
-    const [list, setList] = React.useState(() => adapter.listChannels());
+    const [prefill] = React.useState(() => { const value = settingsPrefill; settingsPrefill = null; return value; });
+    const [list, setList] = React.useState(() => includeChannel(adapter.listChannels(), prefill));
     const [query, setQuery] = React.useState('');
-    const [selected, setSelected] = React.useState(new Set());
+    const [selected, setSelected] = React.useState(() => new Set(prefill ? [prefill.id] : []));
     const [format, setFormat] = React.useState(FORMATS[storage.format] ? storage.format : 'html');
     const [expanded, setExpanded] = React.useState(null);
     React.useEffect(() => {
@@ -438,7 +445,7 @@ function createPlugin(vd) {
         button(expanded === record.id ? 'Hide files' : `Individual files (${record.files.length})`, () => setExpanded(expanded === record.id ? null : record.id), false, record.id + '-expand'),
         ...(expanded === record.id ? record.files.map(file => button(file.filename, () => { void share(record, file); }, live.busy, file.filename)) : [])
       )),
-      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.1.0 — requires on-device verification.')),
+      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.0 — requires on-device verification.')),
       h(Text, { style: styles.muted }, 'Based on the idea of Nightcord / TestCord ExportDM. This version never uploads your exports or sends messages to a conversation. JSON retains the original API message fields; other formats are readable views. Previously deleted messages cannot be recovered.')
     );
     return h(FlatList, { style: styles.page, data: filtered, keyExtractor: item => item.id,
@@ -452,6 +459,18 @@ function createPlugin(vd) {
       h(Text, { style: styles.muted }, item.type === 3 ? 'Group DM' : 'Direct message'))
     });
   }
+  function openSettings(channel) {
+    settingsPrefill = channel ? { ...channel } : null;
+    const navigation = vd.metro?.common?.navigation;
+    if (typeof navigation?.push === 'function') {
+      navigation.push('PUPU_CUSTOM_PAGE', { title: 'DM Export', render: Settings });
+      return true;
+    }
+    settingsPrefill = null;
+    Alert.alert('DM Export', 'This Kettu build did not expose the settings navigator. Open Kettu → Plugins → DM Export → Configure manually.');
+    return false;
+  }
+
   return {
     settings: Settings,
     onLoad() {
@@ -460,14 +479,34 @@ function createPlugin(vd) {
       if (Array.isArray(storage.exports)) storage.exports = storage.exports.map(r => r.status === 'running' ? { ...r, status: 'interrupted', complete: false } : r);
       publish({ records: readRecords() });
       try {
-        cleanups.push(vd.commands.registerCommand({ name: 'exportdm', description: 'Export this DM locally; save files from DM Export settings.', options: [],
-          execute(_args, ctx) {
+        cleanups.push(vd.commands.registerCommand({
+          name: 'exportdm',
+          description: 'Open DM Export for this chat, or export it immediately.',
+          options: [
+            { name: 'action', description: 'What to do. Defaults to opening the menu.', type: 3, required: false,
+              choices: [{ name: 'Open menu', value: 'menu' }, { name: 'Export now', value: 'export' }] },
+            { name: 'format', description: 'Export format. Setting this also implies Export now.', type: 3, required: false,
+              choices: Object.keys(FORMATS).map(value => ({ name: value.toUpperCase(), value })) },
+            { name: 'share', description: 'Open the Save/Share chooser when a direct export finishes. Defaults to true.', type: 5, required: false }
+          ],
+          execute(args, ctx) {
             const channel = adapter.describeChannel(ctx.channel);
             if (!channel) { Alert.alert('DM Export', 'Run this command inside a DM or group DM.'); return; }
-            Alert.alert('Export this conversation?', `${channel.name}\nFiles will be available in Kettu → Plugins → DM Export → settings.`, [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Export', onPress: () => { void startExport([channel], FORMATS[storage.format] ? storage.format : 'html'); } }
-            ]);
+            const values = Object.fromEntries((args || []).filter(Boolean).map(arg => [arg.name, arg.value]));
+            const impliedExport = values.format != null || values.share != null;
+            const action = String(values.action || (impliedExport ? 'export' : 'menu')).toLowerCase();
+            if (action === 'menu') { openSettings(channel); return; }
+            if (action !== 'export') { Alert.alert('DM Export', 'Action must be menu or export.'); return; }
+            const format = String(values.format || (FORMATS[storage.format] ? storage.format : 'html')).toLowerCase();
+            if (!FORMATS[format]) { Alert.alert('DM Export', 'Format must be html, txt, json, csv, or md.'); return; }
+            const shouldShare = values.share !== false;
+            toast(`Exporting ${channel.name} as ${format.toUpperCase()}…`);
+            void startExport([channel], format).then(async records => {
+              const record = records[0];
+              if (!record?.complete) { toast('DM export did not complete. Open DM Export settings for details.'); return; }
+              toast(`DM export complete: ${record.count.toLocaleString()} messages.`);
+              if (shouldShare) await share(record);
+            }).catch(errorAlert);
             // MUST return undefined: Kettu sends object return values as messages.
           }
         }));
