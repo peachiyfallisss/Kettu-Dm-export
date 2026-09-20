@@ -1,0 +1,7 @@
+{
+  "name": "DM Export for Kettu",
+  "description": "Export full DM histories to HTML, TXT, JSON, CSV or Markdown. Local files, progress and cancellation.",
+  "authors": [{ "name": "Peach" }],
+  "main": "index.js",
+  "vendetta": { "icon": "DownloadIcon" }
+}
