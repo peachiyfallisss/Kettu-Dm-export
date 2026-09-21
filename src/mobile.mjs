@@ -18,8 +18,18 @@ export function createMobileAdapter(vd, environment = globalThis) {
   const shareModule = getProps('open', 'shareSingle') || native('RNShare');
   const saveModule = getProps('saveFile', 'canSaveImage') || getProps('saveFile');
   const nativeDialogManager = () => {
-    try { return environment.DiscordNative?.fileManager || null; }
-    catch { return null; }
+    try {
+      const manager = environment.window?.DiscordNative?.fileManager;
+      if (manager) return manager;
+    } catch { /* Try the global alias. */ }
+    try {
+      const manager = environment.DiscordNative?.fileManager;
+      if (manager) return manager;
+    } catch { /* Try Metro's exported wrapper. */ }
+    try {
+      const exported = getProps('fileManager');
+      return exported?.fileManager || exported?.default?.fileManager || null;
+    } catch { return null; }
   };
   const encodeUtf8 = text => {
     if (typeof environment.TextEncoder === 'function') return new environment.TextEncoder().encode(text);

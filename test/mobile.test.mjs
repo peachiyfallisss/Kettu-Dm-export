@@ -45,14 +45,15 @@ function mock() {
     View: 'View', Text: 'Text', TouchableOpacity: 'TouchableOpacity', TextInput: 'TextInput', FlatList: 'FlatList' };
   const alertManager = { openLazy() {}, close: () => { closedAlerts++; } };
   const navigation = { pushLazy() {} };
+  const discordNativeModule = { fileManager: discordNative.fileManager };
   const vd = { metro: { common: { ReactNative: RN, React, navigation }, findByStoreName: name => stores[name],
-    findByProps: (...keys) => [http, share, saveDialog, alertManager, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
+    findByProps: (...keys) => [http, share, saveDialog, alertManager, discordNativeModule, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
     plugin: { storage: {} }, commands: { registerCommand: command => { commands.push(command); return () => removed++; } },
     ui: {
       toasts: { showToast: text => toasts.push(text) },
       alerts: { showCustomAlert: (component, props) => customAlerts.push({ component, props }) }
     } };
-  const ctx = { vendetta: vd, setTimeout, clearTimeout, setInterval, clearInterval, console, TextEncoder, Uint8Array, DiscordNative: discordNative };
+  const ctx = { vendetta: vd, setTimeout, clearTimeout, setInterval, clearInterval, console, TextEncoder, Uint8Array, window: { DiscordNative: discordNative } };
   const context = vm.createContext(ctx);
   const adapter = vm.runInContext(core + '\n' + mobile + '\ncreateMobileAdapter(vendetta)', context);
   return { writes, reads, shares, saves, nativeSaves, commands, alerts, customAlerts, toasts, stores, file, share, saveDialog, discordNative, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed, closedAlerts: () => closedAlerts };
@@ -78,7 +79,7 @@ test('account switch prevents history requests, file writes and shares', async (
   assert.equal(m.http.calls.length + m.writes.length + m.shares.length, 0);
 });
 
-test('DiscordNative saveWithDialog fallback receives UTF-8 bytes when RNShare is missing', async () => {
+test('window.DiscordNative saveWithDialog fallback receives UTF-8 bytes when RNShare is missing', async () => {
   const m = mock(); delete m.share.open;
   assert.doesNotThrow(() => m.adapter.ensureReady());
   assert.equal(m.adapter.capabilities().share, true);

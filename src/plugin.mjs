@@ -164,7 +164,7 @@ export function createPlugin(vd) {
         button(expanded === record.id ? 'Hide files' : `Individual files (${record.files.length})`, () => setExpanded(expanded === record.id ? null : record.id), false, record.id + '-expand'),
         ...(expanded === record.id ? record.files.map(file => button(file.filename, () => { void share(record, file); }, live.busy || !canShare, file.filename)) : [])
       )),
-      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.6 — on-device export verified; direct native Save As experimental.')),
+      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.7 — on-device export verified; native Save As detector fixed.')),
       h(Text, { style: styles.muted }, 'Based on the idea of Nightcord / TestCord ExportDM. This version never uploads your exports or sends messages to a conversation. JSON retains the original API message fields; other formats are readable views. Previously deleted messages cannot be recovered.')
     );
     return h(FlatList, { style: styles.page, data: filtered, keyExtractor: item => item.id,

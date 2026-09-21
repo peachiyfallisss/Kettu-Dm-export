@@ -2,7 +2,7 @@
 
 A mobile reimplementation of the full-history DM export feature in [Nightcord / TestCord's ExportDM](https://github.com/TestcordDev/TestCord/tree/main/src/testcordplugins/exportDM), using Kettu's Vendetta-compatible plugin loader.
 
-**Version 0.2.6 — experimental.** The core export path has been verified on-device with KettuXposed 1.4.1 / Discord 345.9. Both data-URL and Blob-URL Save As attempts failed on Android; this build bypasses Discord's URL wrapper and calls `window.DiscordNative.fileManager.saveWithDialog()` directly with UTF-8 bytes.
+**Version 0.2.7 — experimental.** The core export path has been verified on-device with KettuXposed 1.4.1 / Discord 345.9. This build fixes native Save As detection by checking `window.DiscordNative.fileManager` first, then the global alias and Metro export, before calling `saveWithDialog()` with UTF-8 bytes.
 
 ## What it does
 
