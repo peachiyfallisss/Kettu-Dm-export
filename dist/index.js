@@ -221,6 +221,19 @@ function createMobileAdapter(vd, environment = globalThis) {
   const file = native('NativeFileModule', 'RTNFileManager', 'DCDFileManager');
   const shareModule = getProps('open', 'shareSingle') || native('RNShare');
   const saveModule = getProps('saveFile', 'canSaveImage') || getProps('saveFile');
+  const nativeDialogManager = () => {
+    try { return environment.DiscordNative?.fileManager || null; }
+    catch { return null; }
+  };
+  const encodeUtf8 = text => {
+    if (typeof environment.TextEncoder === 'function') return new environment.TextEncoder().encode(text);
+    const encoded = encodeURIComponent(text), bytes = [];
+    for (let i = 0; i < encoded.length; i++) {
+      if (encoded[i] === '%') { bytes.push(parseInt(encoded.slice(i + 1, i + 3), 16)); i += 2; }
+      else bytes.push(encoded.charCodeAt(i));
+    }
+    return new environment.Uint8Array(bytes);
+  };
   const http = getProps('get', 'post', 'put', 'patch', 'del');
   const currentUserId = () => users?.getCurrentUser?.()?.id;
   const verifyOwner = owner => {
@@ -256,12 +269,7 @@ function createMobileAdapter(vd, environment = globalThis) {
   };
   const shareBackend = () => {
     if (typeof shareModule?.open === 'function') return 'rnshare';
-    if (
-      typeof saveModule?.saveFile === 'function' &&
-      typeof file?.readFile === 'function' &&
-      typeof environment.Blob === 'function' &&
-      typeof environment.URL?.createObjectURL === 'function'
-    ) return 'discord-save';
+    if (typeof nativeDialogManager()?.saveWithDialog === 'function' && typeof file?.readFile === 'function') return 'discord-native-dialog';
     return 'none';
   };
   const capabilities = () => ({
@@ -303,6 +311,11 @@ function createMobileAdapter(vd, environment = globalThis) {
       const loader = environment.__PYON_LOADER__;
       if (loader?.loaderName || loader?.loaderVersion) lines.unshift(`Loader: ${loader.loaderName || 'unknown'} ${loader.loaderVersion || ''}`.trim());
     } catch { /* Loader identity is optional. */ }
+    try {
+      const manager = nativeDialogManager();
+      const methods = ['saveWithDialog', 'saveWithDialog2', 'showOpenDialog'].filter(name => typeof manager?.[name] === 'function');
+      lines.push(`DiscordNative.fileManager: ${methods.length ? methods.join(', ') : 'missing or no picker methods'}`);
+    } catch { lines.push('DiscordNative.fileManager: probe failed'); }
     lines.push(`Native module names: ${nativeNames.size ? [...nativeNames].slice(0, 50).join(', ') : 'none matching share/save/file patterns'}`);
     return lines.join('\n');
   };
@@ -349,28 +362,22 @@ function createMobileAdapter(vd, environment = globalThis) {
         title: 'Save DM export', failOnCancel: false, useInternalStorage: true });
     }
 
-    if (shareBackend() === 'discord-save') {
+    if (shareBackend() === 'discord-native-dialog') {
       const saved = [];
+      const manager = nativeDialogManager();
       for (const output of files) {
         verifyOwner(owner);
         if (!/^(\/|file:\/\/|content:\/\/)/.test(output.path || '')) throw new Error('Invalid saved file path');
         const localPath = output.path.startsWith('file://') ? output.path.slice(7) : output.path;
         const text = await file.readFile(localPath, 'utf8');
         if (typeof text !== 'string') throw new Error('Discord could not read the exported file for saving.');
-        const mime = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(output.mime || '') ? output.mime : 'text/plain';
-        const blob = new environment.Blob([text], { type: mime });
-        const objectUrl = environment.URL.createObjectURL(blob);
-        try {
-          const result = await saveModule.saveFile(objectUrl, output.filename);
-          verifyOwner(owner);
-          if (result == null) return { backend: 'discord-save', saved, canceled: true };
-          saved.push({ filename: output.filename, result });
-        } finally {
-          try { environment.URL.revokeObjectURL?.(objectUrl); } catch { /* Best-effort cleanup. */ }
-          try { blob.close?.(); } catch { /* React Native Blob may expose close(). */ }
-        }
+        const bytes = encodeUtf8(text);
+        const result = await manager.saveWithDialog(bytes, output.filename, undefined);
+        verifyOwner(owner);
+        if (result == null || result?.canceledByUser === true) return { backend: 'discord-native-dialog', saved, canceled: true };
+        saved.push({ filename: output.filename, result });
       }
-      return { backend: 'discord-save', saved, canceled: false };
+      return { backend: 'discord-native-dialog', saved, canceled: false };
     }
 
     throw new Error('File sharing/saving is unavailable on this Discord build.');
@@ -544,7 +551,7 @@ function createPlugin(vd) {
         button(expanded === record.id ? 'Hide files' : `Individual files (${record.files.length})`, () => setExpanded(expanded === record.id ? null : record.id), false, record.id + '-expand'),
         ...(expanded === record.id ? record.files.map(file => button(file.filename, () => { void share(record, file); }, live.busy || !canShare, file.filename)) : [])
       )),
-      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.5 — on-device export verified; Blob Save As fallback experimental.')),
+      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.6 — on-device export verified; direct native Save As experimental.')),
       h(Text, { style: styles.muted }, 'Based on the idea of Nightcord / TestCord ExportDM. This version never uploads your exports or sends messages to a conversation. JSON retains the original API message fields; other formats are readable views. Previously deleted messages cannot be recovered.')
     );
     return h(FlatList, { style: styles.page, data: filtered, keyExtractor: item => item.id,
