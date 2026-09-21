@@ -61,6 +61,36 @@ export function createMobileAdapter(vd, environment = globalThis) {
     const missing = required.filter(k => !caps[k]);
     if (missing.length) throw new Error(`This Discord/Kettu build is missing: ${missing.join(', ')}. No history was fetched. Check the compatibility details in this plugin's settings.`);
   };
+  const sharingDiagnostics = () => {
+    const interesting = /share|save|file|download|document|intent|chooser|export/i;
+    const propertyNames = [
+      'share', 'shareFile', 'shareFiles', 'shareSingle', 'openShareSheet', 'showShareSheet',
+      'presentShareSheet', 'saveFile', 'saveToFiles', 'downloadFile', 'openFile', 'openDocument'
+    ];
+    const lines = [];
+    const seen = new Set();
+    for (const prop of propertyNames) {
+      let module = null;
+      try { module = metro.findByProps?.(prop); } catch { /* Probe next property. */ }
+      if (!module) continue;
+      let keys = [];
+      try { keys = Object.keys(module).filter(key => interesting.test(key)).slice(0, 30); } catch { /* Some Metro exports are proxies. */ }
+      const line = `Metro ${prop}: ${keys.length ? keys.join(', ') : 'module found; matching keys not enumerable'}`;
+      if (!seen.has(line)) { seen.add(line); lines.push(line); }
+    }
+    const nativeNames = new Set();
+    for (const source of [RN.NativeModules, environment.nativeModuleProxy]) {
+      try {
+        for (const name of Object.keys(source || {})) if (interesting.test(name)) nativeNames.add(name);
+      } catch { /* Native proxy may not be enumerable. */ }
+    }
+    try {
+      const loader = environment.__PYON_LOADER__;
+      if (loader?.loaderName || loader?.loaderVersion) lines.unshift(`Loader: ${loader.loaderName || 'unknown'} ${loader.loaderVersion || ''}`.trim());
+    } catch { /* Loader identity is optional. */ }
+    lines.push(`Native module names: ${nativeNames.size ? [...nativeNames].slice(0, 50).join(', ') : 'none matching share/save/file patterns'}`);
+    return lines.join('\n');
+  };
   const request = async (channelId, before, owner) => {
     verifyOwner(owner);
     let timer;
@@ -102,5 +132,5 @@ export function createMobileAdapter(vd, environment = globalThis) {
     return shareModule.open({ urls, type: files.length === 1 ? files[0].mime : '*/*',
       title: 'Save DM export', failOnCancel: false, useInternalStorage: true });
   };
-  return { RN, React: metro.common.React, listChannels, describeChannel, currentUserId, verifyOwner, request, write, shareFiles, capabilities, ensureReady };
+  return { RN, React: metro.common.React, listChannels, describeChannel, currentUserId, verifyOwner, request, write, shareFiles, capabilities, ensureReady, sharingDiagnostics };
 }

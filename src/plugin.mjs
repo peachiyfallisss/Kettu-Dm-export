@@ -143,6 +143,7 @@ export function createPlugin(vd) {
       h(Text, { style: styles.text }, 'Save the full available history of your DMs and group DMs.'),
       h(Text, { style: styles.muted }, 'Media stays linked to Discord. Keep the app open during export. Long histories are split into parts of up to 2,000 messages (or about 4 MB of raw data).'),
       !canShare ? h(Text, { style: styles.muted }, 'This Discord build does not expose native file sharing. Exporting still works, but files will remain in Kettu/Discord app storage until a compatible sharing method is available.') : null,
+      !canShare ? button('Share API diagnostics', () => Alert.alert('Share API diagnostics', adapter.sharingDiagnostics()), live.busy, 'share-diagnostics') : null,
       h(View, { style: styles.row }, ...Object.keys(FORMATS).map(f => button(`${f === format ? '✓ ' : ''}${f.toUpperCase()}`, () => { setFormat(f); storage.format = f; }, live.busy))),
       h(TextInput, { style: styles.input, placeholder: 'Search conversations', placeholderTextColor: '#aeb1c6', accessibilityLabel: 'Search conversations', value: query, onChangeText: setQuery, autoCapitalize: 'none' }),
       h(View, { style: styles.row }, button('Refresh list', refresh, live.busy), button('Select shown', () => setSelected(new Set([...selected, ...filtered.map(c => c.id)])), live.busy), button('Clear', () => setSelected(new Set()), live.busy)),
@@ -163,7 +164,7 @@ export function createPlugin(vd) {
         button(expanded === record.id ? 'Hide files' : `Individual files (${record.files.length})`, () => setExpanded(expanded === record.id ? null : record.id), false, record.id + '-expand'),
         ...(expanded === record.id ? record.files.map(file => button(file.filename, () => { void share(record, file); }, live.busy || !canShare, file.filename)) : [])
       )),
-      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.2 — requires on-device verification.')),
+      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.3 — on-device export verified; sharing probe experimental.')),
       h(Text, { style: styles.muted }, 'Based on the idea of Nightcord / TestCord ExportDM. This version never uploads your exports or sends messages to a conversation. JSON retains the original API message fields; other formats are readable views. Previously deleted messages cannot be recovered.')
     );
     return h(FlatList, { style: styles.page, data: filtered, keyExtractor: item => item.id,

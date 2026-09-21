@@ -63,10 +63,13 @@ test('account switch prevents history requests, file writes and shares', async (
   assert.equal(m.http.calls.length + m.writes.length + m.shares.length, 0);
 });
 
-test('missing native sharing does not block export preflight', () => {
+test('missing native sharing does not block export preflight and diagnostics expose only API names', () => {
   const m = mock(); delete m.share.open;
   assert.doesNotThrow(() => m.adapter.ensureReady());
   assert.equal(m.adapter.capabilities().share, false);
+  const diagnostic = m.adapter.sharingDiagnostics();
+  assert.match(diagnostic, /Metro shareSingle/);
+  assert.doesNotMatch(diagnostic, /Friend|999|42/);
   assert.equal(m.http.calls.length, 0);
 });
 

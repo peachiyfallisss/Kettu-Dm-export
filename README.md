@@ -2,7 +2,7 @@
 
 A mobile reimplementation of the full-history DM export feature in [Nightcord / TestCord's ExportDM](https://github.com/TestcordDev/TestCord/tree/main/src/testcordplugins/exportDM), using Kettu's Vendetta-compatible plugin loader.
 
-**Version 0.2.2 — experimental.** Automated tests pass, but this build has not been run inside a physical Android/iOS Discord client. Discord changes its internal modules frequently. The plugin checks for the necessary APIs before fetching messages and reports missing capabilities in its settings.
+**Version 0.2.3 — experimental.** Automated tests pass, but this build has not been run inside a physical Android/iOS Discord client. Discord changes its internal modules frequently. The plugin checks for the necessary APIs before fetching messages and reports missing capabilities in its settings.
 
 ## What it does
 
@@ -10,7 +10,7 @@ A mobile reimplementation of the full-history DM export feature in [Nightcord / 
 - Offers HTML, TXT, JSON, CSV, and Markdown. JSON retains the complete message objects returned by Discord, including full reply data, attachments, embeds, reactions, stickers, polls and other metadata.
 - Fetches history in pages of 100, with a one-second pause between pages, bounded retries, and server-directed rate-limit waits.
 - Shows progress, allows cancellation, and keeps fetched data when a later request fails.
-- Writes native files locally. When Kettu exposes a compatible native share module, **Save / share files** opens the phone's chooser. Missing sharing no longer blocks the export itself.
+- Writes native files locally. When Kettu exposes a compatible native share module, **Save / share files** opens the phone's chooser. Missing sharing no longer blocks the export itself. Builds without sharing expose a **Share API diagnostics** probe that reports only Metro/native module and function names to help identify Discord's replacement API.
 - Uses Discord's existing authenticated HTTP client. You never paste a Discord token, and the plugin never extracts, stores, or logs one.
 - Registers a local `/exportdm` shortcut. It does not send an export, bot reply, status message, or command text to the conversation.
 
