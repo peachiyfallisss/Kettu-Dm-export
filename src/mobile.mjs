@@ -16,6 +16,7 @@ export function createMobileAdapter(vd, environment = globalThis) {
   };
   const file = native('NativeFileModule', 'RTNFileManager', 'DCDFileManager');
   const shareModule = getProps('open', 'shareSingle') || native('RNShare');
+  const saveModule = getProps('saveFile', 'canSaveImage') || getProps('saveFile');
   const http = getProps('get', 'post', 'put', 'patch', 'del');
   const currentUserId = () => users?.getCurrentUser?.()?.id;
   const verifyOwner = owner => {
@@ -49,11 +50,16 @@ export function createMobileAdapter(vd, environment = globalThis) {
     try { add(selected?.getChannelId?.()); } catch { /* No selected channel. */ }
     return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
   };
+  const shareBackend = () => {
+    if (typeof shareModule?.open === 'function') return 'rnshare';
+    if (typeof saveModule?.saveFile === 'function' && typeof file?.readFile === 'function') return 'discord-save';
+    return 'none';
+  };
   const capabilities = () => ({
     account: !!currentUserId(), channels: !!channels,
     request: typeof http?.get === 'function',
     fileWrite: typeof file?.writeFile === 'function',
-    share: typeof shareModule?.open === 'function'
+    share: shareBackend() !== 'none'
   });
   const ensureReady = () => {
     const caps = capabilities();
@@ -121,16 +127,37 @@ export function createMobileAdapter(vd, environment = globalThis) {
   };
   const shareFiles = async (files, owner) => {
     verifyOwner(owner);
-    if (!shareModule?.open) throw new Error('File sharing is unavailable on this Discord build.');
-    const urls = files.map(f => {
-      if (!/^(\/|file:\/\/|content:\/\/)/.test(f.path || '')) throw new Error('Invalid saved file path');
-      return /^(file|content):\/\//.test(f.path) ? f.path : 'file://' + f.path;
-    });
-    if (!urls.length) throw new Error('There are no saved files to share.');
-    // RNShare owns the Android FileProvider and native chooser; ReactNative.Share
-    // cannot attach files on Android and must not be used as a false fallback.
-    return shareModule.open({ urls, type: files.length === 1 ? files[0].mime : '*/*',
-      title: 'Save DM export', failOnCancel: false, useInternalStorage: true });
+    if (!files.length) throw new Error('There are no saved files to share.');
+
+    if (typeof shareModule?.open === 'function') {
+      const urls = files.map(f => {
+        if (!/^(\/|file:\/\/|content:\/\/)/.test(f.path || '')) throw new Error('Invalid saved file path');
+        return /^(file|content):\/\//.test(f.path) ? f.path : 'file://' + f.path;
+      });
+      // RNShare owns the Android FileProvider and native chooser; ReactNative.Share
+      // cannot attach files on Android and must not be used as a false fallback.
+      return shareModule.open({ urls, type: files.length === 1 ? files[0].mime : '*/*',
+        title: 'Save DM export', failOnCancel: false, useInternalStorage: true });
+    }
+
+    if (typeof saveModule?.saveFile === 'function' && typeof file?.readFile === 'function') {
+      const saved = [];
+      for (const output of files) {
+        verifyOwner(owner);
+        if (!/^(\/|file:\/\/|content:\/\/)/.test(output.path || '')) throw new Error('Invalid saved file path');
+        const localPath = output.path.startsWith('file://') ? output.path.slice(7) : output.path;
+        const base64 = await file.readFile(localPath, 'base64');
+        if (typeof base64 !== 'string') throw new Error('Discord could not read the exported file for saving.');
+        const mime = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(output.mime || '') ? output.mime : 'application/octet-stream';
+        const result = await saveModule.saveFile(`data:${mime};base64,${base64}`, output.filename);
+        verifyOwner(owner);
+        if (result == null) return { backend: 'discord-save', saved, canceled: true };
+        saved.push({ filename: output.filename, result });
+      }
+      return { backend: 'discord-save', saved, canceled: false };
+    }
+
+    throw new Error('File sharing/saving is unavailable on this Discord build.');
   };
-  return { RN, React: metro.common.React, listChannels, describeChannel, currentUserId, verifyOwner, request, write, shareFiles, capabilities, ensureReady, sharingDiagnostics };
+  return { RN, React: metro.common.React, listChannels, describeChannel, currentUserId, verifyOwner, request, write, shareFiles, capabilities, ensureReady, sharingDiagnostics, shareBackend };
 }

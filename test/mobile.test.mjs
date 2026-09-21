@@ -10,7 +10,7 @@ const core = readFileSync(new URL('../src/core.mjs', import.meta.url), 'utf8').r
 const mobile = readFileSync(new URL('../src/mobile.mjs', import.meta.url), 'utf8').replace(/^export /gm, '');
 
 function mock() {
-  const writes = [], shares = [], commands = [], alerts = [], customAlerts = [], toasts = [];
+  const writes = [], reads = [], shares = [], saves = [], commands = [], alerts = [], customAlerts = [], toasts = [];
   let closedAlerts = 0;
   let owner = '42', removed = 0;
   const dm = { id: '999', type: 1, recipients: ['123'] };
@@ -19,8 +19,15 @@ function mock() {
     UserStore: { getCurrentUser: () => ({ id: owner }), getUser: () => ({ username: 'Friend' }) },
     SelectedChannelStore: { getChannelId: () => '999' }
   };
-  const file = { writeFile: async (...args) => { writes.push(args); return '/data/documents/' + args[1]; } };
+  const file = {
+    writeFile: async (...args) => { writes.push(args); return '/data/documents/' + args[1]; },
+    readFile: async (...args) => { reads.push(args); return 'SGVsbG8='; }
+  };
   const share = { open: async options => { shares.push(options); return { success: true }; }, shareSingle() {} };
+  const saveDialog = {
+    canSaveImage() { return true; },
+    saveFile: async (...args) => { saves.push(args); return '/storage/emulated/0/Download/' + args[1]; }
+  };
   const http = { get: async options => { http.calls.push(options); return { status: 200, body: [] }; }, post() {}, put() {}, patch() {}, del() {}, calls: [] };
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children }),
@@ -31,7 +38,7 @@ function mock() {
   const alertManager = { openLazy() {}, close: () => { closedAlerts++; } };
   const navigation = { pushLazy() {} };
   const vd = { metro: { common: { ReactNative: RN, React, navigation }, findByStoreName: name => stores[name],
-    findByProps: (...keys) => [http, share, alertManager, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
+    findByProps: (...keys) => [http, share, saveDialog, alertManager, ...Object.values(stores)].find(obj => keys.every(k => k in obj)) },
     plugin: { storage: {} }, commands: { registerCommand: command => { commands.push(command); return () => removed++; } },
     ui: {
       toasts: { showToast: text => toasts.push(text) },
@@ -40,7 +47,7 @@ function mock() {
   const ctx = { vendetta: vd, setTimeout, clearTimeout, setInterval, clearInterval, console };
   const context = vm.createContext(ctx);
   const adapter = vm.runInContext(core + '\n' + mobile + '\ncreateMobileAdapter(vendetta)', context);
-  return { writes, shares, commands, alerts, customAlerts, toasts, stores, file, share, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed, closedAlerts: () => closedAlerts };
+  return { writes, reads, shares, saves, commands, alerts, customAlerts, toasts, stores, file, share, saveDialog, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed, closedAlerts: () => closedAlerts };
 }
 
 test('native adapter lists DMs, sends only GET history requests, and writes UTF-8 files', async () => {
@@ -63,14 +70,28 @@ test('account switch prevents history requests, file writes and shares', async (
   assert.equal(m.http.calls.length + m.writes.length + m.shares.length, 0);
 });
 
-test('missing native sharing does not block export preflight and diagnostics expose only API names', () => {
+test('Discord saveFile fallback is detected when RNShare is missing', async () => {
   const m = mock(); delete m.share.open;
   assert.doesNotThrow(() => m.adapter.ensureReady());
-  assert.equal(m.adapter.capabilities().share, false);
+  assert.equal(m.adapter.capabilities().share, true);
+  assert.equal(m.adapter.shareBackend(), 'discord-save');
+  await m.adapter.shareFiles([{ filename: 'DM.json', path: '/data/documents/DM.json', mime: 'application/json' }], '42');
+  assert.equal(m.reads.length, 1);
+  assert.equal(m.reads[0][1], 'base64');
+  assert.equal(m.saves.length, 1);
+  assert.match(m.saves[0][0], /^data:application\/json;base64,SGVsbG8=/);
+  assert.equal(m.saves[0][1], 'DM.json');
   const diagnostic = m.adapter.sharingDiagnostics();
-  assert.match(diagnostic, /Metro shareSingle/);
+  assert.match(diagnostic, /Metro saveFile/);
   assert.doesNotMatch(diagnostic, /Friend|999|42/);
   assert.equal(m.http.calls.length, 0);
+});
+
+test('export preflight still works when no external save backend exists', () => {
+  const m = mock(); delete m.share.open; delete m.saveDialog.saveFile;
+  assert.doesNotThrow(() => m.adapter.ensureReady());
+  assert.equal(m.adapter.capabilities().share, false);
+  assert.equal(m.adapter.shareBackend(), 'none');
 });
 
 test('path traversal cannot write outside the export directory', async () => {
@@ -127,19 +148,19 @@ test('/exportdm can export and share the current DM without opening settings', a
   plugin.onUnload();
 });
 
-test('/exportdm direct export completes when native sharing is unavailable', async () => {
+test('/exportdm direct export uses Discord Save As when RNShare is unavailable', async () => {
   const m = mock(); delete m.share.open;
   const plugin = vm.runInContext(bundle, m.context);
   plugin.onLoad();
   m.commands[0].execute([
     { name: 'format', value: 'json' }
   ], { channel: { id: '999', type: 1, recipients: ['123'] } });
-  for (let i = 0; i < 20 && m.http.calls.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
-  for (let i = 0; i < 20 && !m.toasts.some(text => /saved inside/i.test(text)); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  for (let i = 0; i < 40 && m.saves.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(m.http.calls.length, 1);
   assert.ok(m.writes.length >= 2);
   assert.equal(m.shares.length, 0);
-  assert.ok(m.toasts.some(text => /saved inside/i.test(text)));
+  assert.ok(m.saves.length >= 1);
+  assert.ok(m.saves.every(call => /^data:/.test(call[0])));
   plugin.onUnload();
 });
 
