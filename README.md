@@ -2,7 +2,7 @@
 
 A mobile reimplementation of the full-history DM export feature in [Nightcord / TestCord's ExportDM](https://github.com/TestcordDev/TestCord/tree/main/src/testcordplugins/exportDM), using Kettu's Vendetta-compatible plugin loader.
 
-**Version 0.2.7 — experimental.** The core export path has been verified on-device with KettuXposed 1.4.1 / Discord 345.9. This build fixes native Save As detection by checking `window.DiscordNative.fileManager` first, then the global alias and Metro export, before calling `saveWithDialog()` with UTF-8 bytes.
+**Version 0.2.8 — experimental.** The core export path has been verified on-device with KettuXposed 1.4.1 / Discord 345.9. Discord 345.9 bundles RNDocumentPicker with Android `saveDocuments()`; this build uses that system Save As API directly for completed exports.
 
 ## What it does
 
@@ -10,7 +10,7 @@ A mobile reimplementation of the full-history DM export feature in [Nightcord / 
 - Offers HTML, TXT, JSON, CSV, and Markdown. JSON retains the complete message objects returned by Discord, including full reply data, attachments, embeds, reactions, stickers, polls and other metadata.
 - Fetches history in pages of 100, with a one-second pause between pages, bounded retries, and server-directed rate-limit waits.
 - Shows progress, allows cancellation, and keeps fetched data when a later request fails.
-- Writes native files locally. It prefers RNShare when available; otherwise it reads the completed text export back from Discord's app documents directory, encodes it as a UTF-8 `Uint8Array`, and calls Discord's injected `window.DiscordNative.fileManager.saveWithDialog(bytes, filename)` directly. This bypasses React Native fetch/URL handling entirely. If neither backend exists, exporting still completes internally.
+- Writes native files locally. It prefers RNShare when available; otherwise it uses Discord's bundled RNDocumentPicker `saveDocuments()` API with the existing local `file://` export, which opens Android's system Save As picker. No Blob, data URL, network fetch, or re-encoding is required. If neither backend exists, exporting still completes internally.
 - Uses Discord's existing authenticated HTTP client. You never paste a Discord token, and the plugin never extracts, stores, or logs one.
 - Registers a local `/exportdm` shortcut. It does not send an export, bot reply, status message, or command text to the conversation.
 

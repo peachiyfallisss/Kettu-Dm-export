@@ -16,30 +16,11 @@ export function createMobileAdapter(vd, environment = globalThis) {
   };
   const file = native('NativeFileModule', 'RTNFileManager', 'DCDFileManager');
   const shareModule = getProps('open', 'shareSingle') || native('RNShare');
-  const saveModule = getProps('saveFile', 'canSaveImage') || getProps('saveFile');
-  const nativeDialogManager = () => {
-    try {
-      const manager = environment.window?.DiscordNative?.fileManager;
-      if (manager) return manager;
-    } catch { /* Try the global alias. */ }
-    try {
-      const manager = environment.DiscordNative?.fileManager;
-      if (manager) return manager;
-    } catch { /* Try Metro's exported wrapper. */ }
-    try {
-      const exported = getProps('fileManager');
-      return exported?.fileManager || exported?.default?.fileManager || null;
-    } catch { return null; }
-  };
-  const encodeUtf8 = text => {
-    if (typeof environment.TextEncoder === 'function') return new environment.TextEncoder().encode(text);
-    const encoded = encodeURIComponent(text), bytes = [];
-    for (let i = 0; i < encoded.length; i++) {
-      if (encoded[i] === '%') { bytes.push(parseInt(encoded.slice(i + 1, i + 3), 16)); i += 2; }
-      else bytes.push(encoded.charCodeAt(i));
-    }
-    return new environment.Uint8Array(bytes);
-  };
+  const documentPicker = getProps('saveDocuments');
+  const nativeDocumentPicker = native('RNDocumentPicker');
+  const hasDocumentPicker = () =>
+    typeof documentPicker?.saveDocuments === 'function' ||
+    (typeof nativeDocumentPicker?.saveDocument === 'function' && typeof nativeDocumentPicker?.writeDocuments === 'function');
   const http = getProps('get', 'post', 'put', 'patch', 'del');
   const currentUserId = () => users?.getCurrentUser?.()?.id;
   const verifyOwner = owner => {
@@ -75,7 +56,7 @@ export function createMobileAdapter(vd, environment = globalThis) {
   };
   const shareBackend = () => {
     if (typeof shareModule?.open === 'function') return 'rnshare';
-    if (typeof nativeDialogManager()?.saveWithDialog === 'function' && typeof file?.readFile === 'function') return 'discord-native-dialog';
+    if (hasDocumentPicker()) return 'document-picker';
     return 'none';
   };
   const capabilities = () => ({
@@ -94,7 +75,7 @@ export function createMobileAdapter(vd, environment = globalThis) {
     const interesting = /share|save|file|download|document|intent|chooser|export/i;
     const propertyNames = [
       'share', 'shareFile', 'shareFiles', 'shareSingle', 'openShareSheet', 'showShareSheet',
-      'presentShareSheet', 'saveFile', 'saveToFiles', 'downloadFile', 'openFile', 'openDocument'
+      'presentShareSheet', 'saveFile', 'saveDocuments', 'saveToFiles', 'downloadFile', 'openFile', 'openDocument'
     ];
     const lines = [];
     const seen = new Set();
@@ -118,10 +99,10 @@ export function createMobileAdapter(vd, environment = globalThis) {
       if (loader?.loaderName || loader?.loaderVersion) lines.unshift(`Loader: ${loader.loaderName || 'unknown'} ${loader.loaderVersion || ''}`.trim());
     } catch { /* Loader identity is optional. */ }
     try {
-      const manager = nativeDialogManager();
-      const methods = ['saveWithDialog', 'saveWithDialog2', 'showOpenDialog'].filter(name => typeof manager?.[name] === 'function');
-      lines.push(`DiscordNative.fileManager: ${methods.length ? methods.join(', ') : 'missing or no picker methods'}`);
-    } catch { lines.push('DiscordNative.fileManager: probe failed'); }
+      const methods = ['saveDocuments'].filter(name => typeof documentPicker?.[name] === 'function');
+      const nativeMethods = ['saveDocument', 'writeDocuments'].filter(name => typeof nativeDocumentPicker?.[name] === 'function');
+      lines.push(`RNDocumentPicker: ${methods.length || nativeMethods.length ? [...methods, ...nativeMethods].join(', ') : 'missing'}`);
+    } catch { lines.push('RNDocumentPicker: probe failed'); }
     lines.push(`Native module names: ${nativeNames.size ? [...nativeNames].slice(0, 50).join(', ') : 'none matching share/save/file patterns'}`);
     return lines.join('\n');
   };
@@ -168,22 +149,32 @@ export function createMobileAdapter(vd, environment = globalThis) {
         title: 'Save DM export', failOnCancel: false, useInternalStorage: true });
     }
 
-    if (shareBackend() === 'discord-native-dialog') {
+    if (shareBackend() === 'document-picker') {
       const saved = [];
-      const manager = nativeDialogManager();
       for (const output of files) {
         verifyOwner(owner);
         if (!/^(\/|file:\/\/|content:\/\/)/.test(output.path || '')) throw new Error('Invalid saved file path');
-        const localPath = output.path.startsWith('file://') ? output.path.slice(7) : output.path;
-        const text = await file.readFile(localPath, 'utf8');
-        if (typeof text !== 'string') throw new Error('Discord could not read the exported file for saving.');
-        const bytes = encodeUtf8(text);
-        const result = await manager.saveWithDialog(bytes, output.filename, undefined);
+        const sourceUri = /^(file|content):\/\//.test(output.path) ? output.path : 'file://' + output.path;
+        const options = {
+          sourceUris: [sourceUri],
+          fileName: output.filename,
+          mimeType: output.mime || 'application/octet-stream',
+          copy: true
+        };
+        let results;
+        if (typeof documentPicker?.saveDocuments === 'function') {
+          results = await documentPicker.saveDocuments(options);
+        } else {
+          const staged = await nativeDocumentPicker.saveDocument(options);
+          results = await nativeDocumentPicker.writeDocuments(staged);
+        }
         verifyOwner(owner);
-        if (result == null || result?.canceledByUser === true) return { backend: 'discord-native-dialog', saved, canceled: true };
+        const result = Array.isArray(results) ? results[0] : results;
+        if (!result) return { backend: 'document-picker', saved, canceled: true };
+        if (result.error) throw new Error(result.error);
         saved.push({ filename: output.filename, result });
       }
-      return { backend: 'discord-native-dialog', saved, canceled: false };
+      return { backend: 'document-picker', saved, canceled: false };
     }
 
     throw new Error('File sharing/saving is unavailable on this Discord build.');
