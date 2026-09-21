@@ -52,7 +52,12 @@ export function createMobileAdapter(vd, environment = globalThis) {
   };
   const shareBackend = () => {
     if (typeof shareModule?.open === 'function') return 'rnshare';
-    if (typeof saveModule?.saveFile === 'function' && typeof file?.readFile === 'function') return 'discord-save';
+    if (
+      typeof saveModule?.saveFile === 'function' &&
+      typeof file?.readFile === 'function' &&
+      typeof environment.Blob === 'function' &&
+      typeof environment.URL?.createObjectURL === 'function'
+    ) return 'discord-save';
     return 'none';
   };
   const capabilities = () => ({
@@ -140,19 +145,26 @@ export function createMobileAdapter(vd, environment = globalThis) {
         title: 'Save DM export', failOnCancel: false, useInternalStorage: true });
     }
 
-    if (typeof saveModule?.saveFile === 'function' && typeof file?.readFile === 'function') {
+    if (shareBackend() === 'discord-save') {
       const saved = [];
       for (const output of files) {
         verifyOwner(owner);
         if (!/^(\/|file:\/\/|content:\/\/)/.test(output.path || '')) throw new Error('Invalid saved file path');
         const localPath = output.path.startsWith('file://') ? output.path.slice(7) : output.path;
-        const base64 = await file.readFile(localPath, 'base64');
-        if (typeof base64 !== 'string') throw new Error('Discord could not read the exported file for saving.');
-        const mime = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(output.mime || '') ? output.mime : 'application/octet-stream';
-        const result = await saveModule.saveFile(`data:${mime};base64,${base64}`, output.filename);
-        verifyOwner(owner);
-        if (result == null) return { backend: 'discord-save', saved, canceled: true };
-        saved.push({ filename: output.filename, result });
+        const text = await file.readFile(localPath, 'utf8');
+        if (typeof text !== 'string') throw new Error('Discord could not read the exported file for saving.');
+        const mime = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(output.mime || '') ? output.mime : 'text/plain';
+        const blob = new environment.Blob([text], { type: mime });
+        const objectUrl = environment.URL.createObjectURL(blob);
+        try {
+          const result = await saveModule.saveFile(objectUrl, output.filename);
+          verifyOwner(owner);
+          if (result == null) return { backend: 'discord-save', saved, canceled: true };
+          saved.push({ filename: output.filename, result });
+        } finally {
+          try { environment.URL.revokeObjectURL?.(objectUrl); } catch { /* Best-effort cleanup. */ }
+          try { blob.close?.(); } catch { /* React Native Blob may expose close(). */ }
+        }
       }
       return { backend: 'discord-save', saved, canceled: false };
     }

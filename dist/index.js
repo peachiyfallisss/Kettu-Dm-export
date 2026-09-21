@@ -256,7 +256,12 @@ function createMobileAdapter(vd, environment = globalThis) {
   };
   const shareBackend = () => {
     if (typeof shareModule?.open === 'function') return 'rnshare';
-    if (typeof saveModule?.saveFile === 'function' && typeof file?.readFile === 'function') return 'discord-save';
+    if (
+      typeof saveModule?.saveFile === 'function' &&
+      typeof file?.readFile === 'function' &&
+      typeof environment.Blob === 'function' &&
+      typeof environment.URL?.createObjectURL === 'function'
+    ) return 'discord-save';
     return 'none';
   };
   const capabilities = () => ({
@@ -344,19 +349,26 @@ function createMobileAdapter(vd, environment = globalThis) {
         title: 'Save DM export', failOnCancel: false, useInternalStorage: true });
     }
 
-    if (typeof saveModule?.saveFile === 'function' && typeof file?.readFile === 'function') {
+    if (shareBackend() === 'discord-save') {
       const saved = [];
       for (const output of files) {
         verifyOwner(owner);
         if (!/^(\/|file:\/\/|content:\/\/)/.test(output.path || '')) throw new Error('Invalid saved file path');
         const localPath = output.path.startsWith('file://') ? output.path.slice(7) : output.path;
-        const base64 = await file.readFile(localPath, 'base64');
-        if (typeof base64 !== 'string') throw new Error('Discord could not read the exported file for saving.');
-        const mime = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(output.mime || '') ? output.mime : 'application/octet-stream';
-        const result = await saveModule.saveFile(`data:${mime};base64,${base64}`, output.filename);
-        verifyOwner(owner);
-        if (result == null) return { backend: 'discord-save', saved, canceled: true };
-        saved.push({ filename: output.filename, result });
+        const text = await file.readFile(localPath, 'utf8');
+        if (typeof text !== 'string') throw new Error('Discord could not read the exported file for saving.');
+        const mime = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(output.mime || '') ? output.mime : 'text/plain';
+        const blob = new environment.Blob([text], { type: mime });
+        const objectUrl = environment.URL.createObjectURL(blob);
+        try {
+          const result = await saveModule.saveFile(objectUrl, output.filename);
+          verifyOwner(owner);
+          if (result == null) return { backend: 'discord-save', saved, canceled: true };
+          saved.push({ filename: output.filename, result });
+        } finally {
+          try { environment.URL.revokeObjectURL?.(objectUrl); } catch { /* Best-effort cleanup. */ }
+          try { blob.close?.(); } catch { /* React Native Blob may expose close(). */ }
+        }
       }
       return { backend: 'discord-save', saved, canceled: false };
     }
@@ -532,7 +544,7 @@ function createPlugin(vd) {
         button(expanded === record.id ? 'Hide files' : `Individual files (${record.files.length})`, () => setExpanded(expanded === record.id ? null : record.id), false, record.id + '-expand'),
         ...(expanded === record.id ? record.files.map(file => button(file.filename, () => { void share(record, file); }, live.busy || !canShare, file.filename)) : [])
       )),
-      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.4 — on-device export verified; Discord Save As fallback experimental.')),
+      button('Compatibility details', () => Alert.alert('Compatibility', Object.entries(adapter.capabilities()).map(([key, value]) => `${key}: ${value ? 'available' : 'missing'}`).join('\n') + '\n\nVersion 0.2.5 — on-device export verified; Blob Save As fallback experimental.')),
       h(Text, { style: styles.muted }, 'Based on the idea of Nightcord / TestCord ExportDM. This version never uploads your exports or sends messages to a conversation. JSON retains the original API message fields; other formats are readable views. Previously deleted messages cannot be recovered.')
     );
     return h(FlatList, { style: styles.page, data: filtered, keyExtractor: item => item.id,

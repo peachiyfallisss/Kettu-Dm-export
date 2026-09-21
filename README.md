@@ -2,7 +2,7 @@
 
 A mobile reimplementation of the full-history DM export feature in [Nightcord / TestCord's ExportDM](https://github.com/TestcordDev/TestCord/tree/main/src/testcordplugins/exportDM), using Kettu's Vendetta-compatible plugin loader.
 
-**Version 0.2.4 — experimental.** The core export path has been verified on-device with KettuXposed 1.4.1 / Discord 345.9, including a complete DM export. The new Discord Save As fallback still needs on-device verification.
+**Version 0.2.5 — experimental.** The core export path has been verified on-device with KettuXposed 1.4.1 / Discord 345.9. The previous data-URL Save As attempt failed on Android; this build uses Discord's own native Blob URL bridge instead and still needs on-device verification.
 
 ## What it does
 
@@ -10,7 +10,7 @@ A mobile reimplementation of the full-history DM export feature in [Nightcord / 
 - Offers HTML, TXT, JSON, CSV, and Markdown. JSON retains the complete message objects returned by Discord, including full reply data, attachments, embeds, reactions, stickers, polls and other metadata.
 - Fetches history in pages of 100, with a one-second pause between pages, bounded retries, and server-directed rate-limit waits.
 - Shows progress, allows cancellation, and keeps fetched data when a later request fails.
-- Writes native files locally. It prefers RNShare when available; otherwise it can fall back to Discord's own internal `saveFile(sourceUrl, filename)` flow by reading the completed export back as base64 and opening Discord's native Save As dialog. If neither backend exists, exporting still completes internally.
+- Writes native files locally. It prefers RNShare when available; otherwise it reads the completed text export back from Discord's app documents directory, creates a native React Native `Blob`, passes the resulting local `blob:` URL to Discord's internal `saveFile(sourceUrl, filename)`, and revokes the Blob URL after the Save As dialog returns. If neither backend exists, exporting still completes internally.
 - Uses Discord's existing authenticated HTTP client. You never paste a Discord token, and the plugin never extracts, stores, or logs one.
 - Registers a local `/exportdm` shortcut. It does not send an export, bot reply, status message, or command text to the conversation.
 

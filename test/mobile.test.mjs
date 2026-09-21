@@ -10,7 +10,7 @@ const core = readFileSync(new URL('../src/core.mjs', import.meta.url), 'utf8').r
 const mobile = readFileSync(new URL('../src/mobile.mjs', import.meta.url), 'utf8').replace(/^export /gm, '');
 
 function mock() {
-  const writes = [], reads = [], shares = [], saves = [], commands = [], alerts = [], customAlerts = [], toasts = [];
+  const writes = [], reads = [], shares = [], saves = [], blobUrls = [], revokedBlobUrls = [], commands = [], alerts = [], customAlerts = [], toasts = [];
   let closedAlerts = 0;
   let owner = '42', removed = 0;
   const dm = { id: '999', type: 1, recipients: ['123'] };
@@ -44,10 +44,18 @@ function mock() {
       toasts: { showToast: text => toasts.push(text) },
       alerts: { showCustomAlert: (component, props) => customAlerts.push({ component, props }) }
     } };
-  const ctx = { vendetta: vd, setTimeout, clearTimeout, setInterval, clearInterval, console };
+  class MockBlob {
+    constructor(parts, options = {}) { this.parts = parts; this.type = options.type || ''; this.closed = false; }
+    close() { this.closed = true; }
+  }
+  const MockURL = {
+    createObjectURL: blob => { const url = 'blob://mock/' + (blobUrls.length + 1); blobUrls.push({ url, blob }); return url; },
+    revokeObjectURL: url => revokedBlobUrls.push(url)
+  };
+  const ctx = { vendetta: vd, setTimeout, clearTimeout, setInterval, clearInterval, console, Blob: MockBlob, URL: MockURL };
   const context = vm.createContext(ctx);
   const adapter = vm.runInContext(core + '\n' + mobile + '\ncreateMobileAdapter(vendetta)', context);
-  return { writes, reads, shares, saves, commands, alerts, customAlerts, toasts, stores, file, share, saveDialog, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed, closedAlerts: () => closedAlerts };
+  return { writes, reads, shares, saves, blobUrls, revokedBlobUrls, commands, alerts, customAlerts, toasts, stores, file, share, saveDialog, http, vd, context, adapter, switchAccount: id => { owner = id; }, removed: () => removed, closedAlerts: () => closedAlerts };
 }
 
 test('native adapter lists DMs, sends only GET history requests, and writes UTF-8 files', async () => {
@@ -70,17 +78,20 @@ test('account switch prevents history requests, file writes and shares', async (
   assert.equal(m.http.calls.length + m.writes.length + m.shares.length, 0);
 });
 
-test('Discord saveFile fallback is detected when RNShare is missing', async () => {
+test('Discord saveFile fallback uses a local Blob URL when RNShare is missing', async () => {
   const m = mock(); delete m.share.open;
   assert.doesNotThrow(() => m.adapter.ensureReady());
   assert.equal(m.adapter.capabilities().share, true);
   assert.equal(m.adapter.shareBackend(), 'discord-save');
   await m.adapter.shareFiles([{ filename: 'DM.json', path: '/data/documents/DM.json', mime: 'application/json' }], '42');
   assert.equal(m.reads.length, 1);
-  assert.equal(m.reads[0][1], 'base64');
+  assert.equal(m.reads[0][1], 'utf8');
+  assert.equal(m.blobUrls.length, 1);
+  assert.equal(m.blobUrls[0].blob.type, 'application/json');
   assert.equal(m.saves.length, 1);
-  assert.match(m.saves[0][0], /^data:application\/json;base64,SGVsbG8=/);
+  assert.match(m.saves[0][0], /^blob:\/\/mock\//);
   assert.equal(m.saves[0][1], 'DM.json');
+  assert.deepEqual(m.revokedBlobUrls, [m.saves[0][0]]);
   const diagnostic = m.adapter.sharingDiagnostics();
   assert.match(diagnostic, /Metro saveFile/);
   assert.doesNotMatch(diagnostic, /Friend|999|42/);
@@ -160,7 +171,8 @@ test('/exportdm direct export uses Discord Save As when RNShare is unavailable',
   assert.ok(m.writes.length >= 2);
   assert.equal(m.shares.length, 0);
   assert.ok(m.saves.length >= 1);
-  assert.ok(m.saves.every(call => /^data:/.test(call[0])));
+  assert.ok(m.saves.every(call => /^blob:/.test(call[0])));
+  assert.equal(m.revokedBlobUrls.length, m.saves.length);
   plugin.onUnload();
 });
 
